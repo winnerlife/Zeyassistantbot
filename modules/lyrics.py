@@ -144,5 +144,5 @@ async def sing_lyrics_scraper(client: Client, message: Message):
 
 # --- Add to Help Dictionary ---
 modules_help["lyrics"] = {
-    "lyrics [song title] by [artist]": "Finds lyrics from AZLyrics and 'sings' them word-by-word.",
+    "lyrics [song title] by [artist]": "Finds lyrics and 'sings' them word-by-word.",
 }
