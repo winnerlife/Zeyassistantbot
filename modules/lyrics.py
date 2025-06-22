@@ -1,9 +1,8 @@
 import asyncio
 import re
-import os
 
-# You must install this library: pip install lyricsgenius
-import lyricsgenius
+# httpx is a dependency of Pyrogram, so no new installation is needed.
+import httpx 
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -11,86 +10,106 @@ from pyrogram.errors import FloodWait, MessageNotModified
 
 from utils.misc import modules_help, prefix
 
-# --- Configuration ---
-# IMPORTANT: Place your Genius API Token here.
-# It's recommended to use an environment variable for security.
-# Example: GENIUS_API_TOKEN = os.environ.get("GENIUS_API_TOKEN")
-GENIUS_API_TOKEN = "YOUR_GENIUS_API_TOKEN_HERE" 
+# --- Helper Function to Scrape Lyrics ---
+async def fetch_lyrics_from_az(artist: str, title: str) -> str | None:
+    """
+    Scrapes lyrics from AZLyrics.com.
+    Returns the lyrics as a string, or None if not found.
+    """
+    # Sanitize inputs for the URL format of AZLyrics
+    # e.g., "Guns N' Roses" -> "gunsnroses"
+    artist_f = re.sub(r'[^a-z0-9]', '', artist.lower())
+    title_f = re.sub(r'[^a-z0-9]', '', title.lower())
+    
+    url = f"https://www.azlyrics.com/lyrics/{artist_f}/{title_f}.html"
+    
+    # AZLyrics blocks requests without a valid User-Agent
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+    }
 
-# Initialize the Genius API client
-# The 'verbose=False' and 'remove_section_headers=True' options clean up the output.
-try:
-    genius = lyricsgenius.Genius(GENIUS_API_TOKEN, verbose=False, remove_section_headers=True)
-except Exception as e:
-    genius = None
-    print(f"Could not initialize Genius API. Is the token valid? Error: {e}")
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
+            
+            # If the song is not found, AZLyrics returns a 404
+            if response.status_code != 200:
+                return None
+            
+            html_content = response.text
 
-# --- Helper for animated text ---
-async def edit_with_animation(message: Message, text: str, delay: float = 0.1):
-    """Simple animation for 'Searching...'"""
-    for i in range(4):
-        await message.edit(text + "." * i)
-        await asyncio.sleep(delay)
+        # --- This is the core scraping logic ---
+        # The lyrics are between a specific comment and a </div> tag.
+        # This is brittle and will break if AZLyrics changes their layout.
+        start_marker = "<!-- Usage of azlyrics.com content by any third-party lyrics provider is prohibited by our licensing agreement. Sorry about that. -->"
+        end_marker = "</div>"
+        
+        # Split the HTML to isolate the lyrics block
+        lyrics_block = html_content.split(start_marker)[1]
+        lyrics_raw = lyrics_block.split(end_marker)[0]
+        
+        # Clean up the HTML tags from the raw lyrics
+        lyrics_cleaned = re.sub(r'<br> ?', '\n', lyrics_raw) # Replace <br> with newlines
+        lyrics_cleaned = re.sub(r'</?i>', '', lyrics_cleaned)  # Remove <i> and </i> tags
+        lyrics_cleaned = lyrics_cleaned.strip()
+        
+        # It's better to also decode HTML entities, but this requires the 'html' library.
+        # For simplicity and to meet the "no new imports" rule, we'll skip it.
+        # lyrics_cleaned = html.unescape(lyrics_cleaned)
+
+        return lyrics_cleaned
+
+    except (httpx.RequestError, IndexError):
+        # IndexError will happen if the split markers are not found
+        return None
+
 
 # --- Lyrics Command Handler ---
 @Client.on_message(filters.command("lyrics", prefix) & filters.me)
-async def sing_lyrics(client: Client, message: Message):
-    if not genius:
-        await message.edit("`Genius API is not configured. Please add a valid token.`")
-        await asyncio.sleep(3)
-        await message.delete()
-        return
-
+async def sing_lyrics_scraper(client: Client, message: Message):
     # --- 1. Parse Input ---
     if len(message.command) < 2:
         await message.edit("`Please provide a song title. Usage: .lyrics [song] by [artist]`")
         await asyncio.sleep(3)
         await message.delete()
         return
-    
-    # Rejoin the command parts and split by "by" to separate song and artist
+
     query = " ".join(message.command[1:])
     try:
-        # We assume the format is "song title by artist"
         song_title, artist = query.rsplit(" by ", 1)
         song_title = song_title.strip()
         artist = artist.strip()
     except ValueError:
-        # If "by" is not found, we use the whole query as the song title
-        # and let Genius try to figure it out.
-        song_title = query
-        artist = ""
+        # This will fail if " by " isn't in the query, which is a good hint
+        await message.edit("`Invalid format. Please use: .lyrics [song] by [artist]`")
+        await asyncio.sleep(3)
+        await message.delete()
+        return
 
     # --- 2. Searching Animation ---
-    try:
-        await message.edit("🔎 `Searching...`")
-    except MessageNotModified:
-        pass # Ignore if the message is already the same
+    search_msg = "🔎 `Searching...`"
+    await message.edit(search_msg)
+    # Simple dot animation
+    for i in range(1, 4):
+        await asyncio.sleep(0.3)
+        try:
+            await message.edit(search_msg + "." * i)
+        except MessageNotModified:
+            pass
 
-    # --- 3. Fetch Lyrics ---
-    try:
-        song = genius.search_song(song_title, artist)
-        if song is None:
-            await message.edit(f"❌ **Song not found for:** `{query}`")
-            await asyncio.sleep(4)
-            await message.delete()
-            return
-    except Exception as e:
-        await message.edit(f"An error occurred while searching: `{e}`")
+    # --- 3. Fetch Lyrics using our scraper ---
+    lyrics_text = await fetch_lyrics_from_az(artist, song_title)
+    
+    if lyrics_text is None:
+        await message.edit(f"❌ **Song not found for:** `{song_title} by {artist}`")
         await asyncio.sleep(4)
         await message.delete()
         return
 
     # --- 4. Prepare and "Sing" Lyrics ---
-    lyrics_text = song.lyrics
-    # Clean up the first line which is often just "[Song Title] Lyrics"
-    lyrics_text = re.sub(r'.*?Lyrics\n', '', lyrics_text, 1)
-    # Also clean potential "Embed" lines at the end
-    lyrics_text = re.sub(r'\d*Embed$', '', lyrics_text).strip()
-
     lines = [line for line in lyrics_text.split('\n') if line.strip() != '']
 
-    await message.edit(f'▶️ **NOW PLAYING:** "{song.title}" by **{song.artist}**')
+    await message.edit(f'▶️ **NOW PLAYING:** "{song_title.title()}" by **{artist.title()}**')
     await asyncio.sleep(2)
 
     try:
@@ -98,34 +117,25 @@ async def sing_lyrics(client: Client, message: Message):
             words = line.split()
             current_line_text = ""
             
-            # Don't sing lines that are too long to avoid hitting Telegram limits
-            if len(line) > 4000:  # Telegram message character limit is 4096
-                continue
+            if len(line) > 4000: continue # Skip very long lines
 
             # Animate word by word
             for word in words:
                 current_line_text += f" {word}"
-                # Use a very short delay for a fast "typing" effect
                 animation_speed = 0.25 # seconds per word
                 
                 try:
-                    # The microphone emoji adds a nice touch
                     await message.edit(f"🎤 `{current_line_text.strip()}`")
                     await asyncio.sleep(animation_speed)
                 except FloodWait as e:
-                    # If we get floodwaited, wait the specified time
                     await asyncio.sleep(e.value)
                 except MessageNotModified:
-                    # If the word is the same as the last one, just continue
                     continue
             
-            # Pause slightly longer at the end of a line
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.5) # Pause at the end of a line
 
     except Exception:
-        # If anything goes wrong during the animation (e.g., message deleted)
-        # we just stop silently.
-        return
+        return # Stop silently if an error occurs
     
     # --- 5. Finalization ---
     await asyncio.sleep(5)
@@ -134,5 +144,5 @@ async def sing_lyrics(client: Client, message: Message):
 
 # --- Add to Help Dictionary ---
 modules_help["lyrics"] = {
-    "lyrics [song title] by [artist]": "Finds and 'sings' the lyrics of a song word-by-word.",
+    "lyrics [song title] by [artist]": "Finds lyrics from AZLyrics and 'sings' them word-by-word.",
 }
