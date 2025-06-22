@@ -65,7 +65,7 @@ async def fetch_lyrics_from_az(artist: str, title: str) -> str | None:
 
 
 # --- Lyrics Command Handler ---
-@Client.on_message(filters.command("lyrics", prefix) & filters.me)
+@Client.on_message(filters.command("lyricss", prefix) & filters.me)
 async def sing_lyrics_scraper(client: Client, message: Message):
     # --- 1. Parse Input ---
     if len(message.command) < 2:
