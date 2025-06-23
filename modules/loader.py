@@ -14,6 +14,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio  # <-- ADDED IMPORT
 import hashlib
 import os
 import shutil
@@ -176,6 +177,78 @@ async def loadmod(_, message: Message):
     )
     restart()
 
+# --- NEW FUNCTION ADDED BELOW ---
+
+@Client.on_message(filters.command("install", prefix) & filters.me & filters.reply)
+async def install_with_password(client: Client, message: Message):
+    """Installs a replied-to module after password verification."""
+    if not (
+        message.reply_to_message.document
+        and message.reply_to_message.document.file_name.endswith(".py")
+    ):
+        await message.edit("<b>You must reply to a Python (.py) file to install.</b>")
+        return
+
+    EXPECTED_PASSWORD = "1219"
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    prompt_message = await message.edit(
+        "<b>Please reply to this message with the installation password.</b>\n"
+        "<i>You have 60 seconds.</i>"
+    )
+
+    try:
+        password_message = await client.listen(
+            chat_id=chat_id,
+            user_id=user_id,
+            timeout=60
+        )
+    except asyncio.TimeoutError:
+        await prompt_message.edit("<b>Timed out. Installation cancelled.</b>")
+        return
+
+    if password_message.text and password_message.text.strip() == EXPECTED_PASSWORD:
+        await prompt_message.edit("<b>✅ Password correct. Installing module...</b>")
+        await password_message.delete()
+    else:
+        await prompt_message.edit("<b>❌ Wrong password. Installation cancelled.</b>")
+        await password_message.delete()
+        return
+
+    try:
+        replied_message = message.reply_to_message
+        file_path = await replied_message.download()
+        module_name = replied_message.document.file_name[:-3]
+
+        if not os.path.exists(f"{BASE_PATH}/modules/custom_modules"):
+            os.mkdir(f"{BASE_PATH}/modules/custom_modules")
+
+        os.rename(file_path, f"./modules/custom_modules/{module_name}.py")
+
+        all_modules = db.get("custom.modules", "allModules", [])
+        if module_name not in all_modules:
+            all_modules.append(module_name)
+            db.set("custom.modules", "allModules", all_modules)
+
+        await prompt_message.edit(
+            f"<b>✅ Module <code>{module_name}</code> installed!\nRestarting...</b>"
+        )
+
+        db.set(
+            "core.updater",
+            "restart_info",
+            {
+                "type": "restart",
+                "chat_id": message.chat.id,
+                "message_id": prompt_message.id,
+            },
+        )
+        restart()
+    except Exception as e:
+        await prompt_message.edit(f"<b>An error occurred during installation:</b>\n<code>{e}</code>")
+
+# --- END OF NEW FUNCTION ---
 
 @Client.on_message(filters.command(["unloadmod", "ulm"], prefix) & filters.me)
 async def unload_mods(_, message: Message):
@@ -321,10 +394,12 @@ async def updateallmods(_, message: Message):
     await message.edit(f"<b>Successfully updated {len(modules_installed)} modules</b>")
 
 
+# --- HELP DICTIONARY UPDATED BELOW ---
 modules_help["loader"] = {
-    "loadmod [module_name]*": "Download module.\n"
+    "loadmod [module_name]*": "Download a VERIFIED module.\n"
     "Only modules from the official custom_modules repository and proven "
     "modules whose hashes are in modules_hashes.txt are supported",
+    "install [reply to file]": "Install a module from a file using a password (UNSAFE).",
     "unloadmod [module_name]*": "Delete module",
     "modhash [link]*": "Get module hash by link",
     "loadallmods": "Load all custom modules (use it at your own risk)",
