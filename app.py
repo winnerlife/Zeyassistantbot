@@ -5,7 +5,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def hello_world():
-    return "This is Moon"
+    return "Zeylo's Bot Live port. This site does NOT do anything"
 
 
 if __name__ == "__main__":
