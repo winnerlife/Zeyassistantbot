@@ -14,3 +14,4 @@ requests
 environs
 GitPython
 beautifulsoup4
+google-generativeai
