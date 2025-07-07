@@ -1,4 +1,5 @@
 pyrofork
+yt-dlp
 instaloader
 tgcrypto
 wheel
