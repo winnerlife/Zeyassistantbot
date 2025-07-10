@@ -1,5 +1,3 @@
-this is the cloud.sh
-
 cat <<'EOF'
  _      ____  ____  _     
 / \__/|/  _ \/  _ \/ \  /|
