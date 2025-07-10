@@ -42,10 +42,10 @@
 # ///
 import os
 import logging
-
 import sqlite3
 import platform
 import subprocess
+import asyncio # <-- [ADDED] - Import asyncio for the new logic
 
 from pyrogram import Client, idle, errors
 from pyrogram.enums.parse_mode import ParseMode
@@ -58,6 +58,9 @@ from utils.misc import gitrepo, userbot_version
 from utils.scripts import restart
 from utils.rentry import rentry_cleanup_job
 from utils.module import ModuleManager
+
+# --- [ADDED] - Import the bot client we created in our module ---
+from modules.bot_help_system import bot_client
 
 SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 if SCRIPT_PATH != os.getcwd():
@@ -83,13 +86,12 @@ app = Client("my_account", **common_params)
 
 
 def load_missing_modules():
+    # This function remains unchanged
     all_modules = db.get("custom.modules", "allModules", [])
     if not all_modules:
         return
-
     custom_modules_path = f"{SCRIPT_PATH}/modules/custom_modules"
     os.makedirs(custom_modules_path, exist_ok=True)
-
     try:
         f = requests.get(
             "https://raw.githubusercontent.com/The-MoonTg-project/custom_modules/main/full.txt"
@@ -100,7 +102,6 @@ def load_missing_modules():
     modules_dict = {
         line.split("/")[-1].split()[0]: line.strip() for line in f.splitlines()
     }
-
     for module_name in all_modules:
         module_path = f"{custom_modules_path}/{module_name}.py"
         if not os.path.exists(module_path) and module_name in modules_dict:
@@ -123,7 +124,13 @@ async def main():
     DeleteAccount.__new__ = None
 
     try:
+        # Start the main userbot client
         await app.start()
+        
+        # --- [ADDED] - Start the helper bot client if it's configured ---
+        if bot_client:
+            await bot_client.start()
+
     except sqlite3.OperationalError as e:
         if str(e) == "database is locked" and os.name == "posix":
             logging.warning(
@@ -156,7 +163,6 @@ async def main():
             pass
         db.remove("core.updater", "restart_info")
 
-    # required for sessionkiller module
     if db.get("core.sessionkiller", "enabled", False):
         db.set(
             "core.sessionkiller",
@@ -173,6 +179,9 @@ async def main():
 
     await idle()
 
+    # --- [ADDED] - Stop the helper bot client gracefully when the script exits ---
+    if bot_client:
+        await bot_client.stop()
     await app.stop()
 
 
