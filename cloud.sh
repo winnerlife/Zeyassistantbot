@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# (It's good practice to have this shebang at the top)
 
 cat <<'EOF'
  _      ____  ____  _     
@@ -14,4 +15,10 @@ Please see < https://github.com/The-MoonTg-project/Moon-Userbot/blob/main/LICENS
 All rights reserved.
 EOF
 
-gunicorn app:app --daemon && python main.py
+# --- [MODIFIED LINE] ---
+# This line now starts three processes in the correct order:
+# 1. Gunicorn (web server) in the background.
+# 2. The assistant bot in the background.
+# 3. The main userbot in the foreground (which keeps the service alive).
+
+gunicorn app:app --daemon && python3 -m assistant & && python3 main.py
