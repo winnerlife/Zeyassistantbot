@@ -1,5 +1,7 @@
 pyrofork
 yt-dlp
+pyrogram
+tgcrypto
 instaloader
 tgcrypto
 wheel
